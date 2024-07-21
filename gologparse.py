@@ -5,16 +5,31 @@ from dateutil import parser
 
 def parse_log_file(log_file_path):
     logs = []
-    with open(log_file_path, 'r') as file:
-        for line in file:
-            try:
-                log_data = json.loads(line)
-                if "msg" in log_data and "execution_time" in log_data:
-                    msg = log_data["msg"]
-                    execution_time = parser.isoparse(log_data["execution_time"])
-                    logs.append((msg, execution_time))
-            except (json.JSONDecodeError, KeyError, ValueError):
-                continue
+    # 尝试多种可能的编码
+    encodings = ['utf-8', 'cp932', 'shift_jis', 'euc-jp', 'iso2022_jp']
+    
+    for encoding in encodings:
+        try:
+            with open(log_file_path, 'r', encoding=encoding) as file:
+                for line in file:
+                    try:
+                        log_data = json.loads(line)
+                        if "msg" in log_data and "execution_time" in log_data:
+                            msg = log_data["msg"]
+                            execution_time = parser.isoparse(log_data["execution_time"])
+                            logs.append((msg, execution_time))
+                    except (json.JSONDecodeError, KeyError, ValueError):
+                        continue
+            # 如果成功读取文件，跳出循环
+            print(f"File successfully read with encoding: {encoding}")
+            break
+        except UnicodeDecodeError:
+            # 如果当前编码失败，尝试下一个
+            continue
+    else:
+        # 如果所有编码都失败
+        raise ValueError("Unable to decode the file with any of the attempted encodings.")
+
     return logs
 
 def calculate_time_diffs(logs):
