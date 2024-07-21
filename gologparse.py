@@ -6,11 +6,13 @@ from dateutil import parser
 def parse_log_line(line):
     try:
         log_data = json.loads(line)
-        msg = log_data.get("msg")
-        execution_time = parser.isoparse(log_data.get("execution_time"))
-        return msg, execution_time
+        if "msg" in log_data and "execution_time" in log_data:
+            msg = log_data["msg"]
+            execution_time = parser.isoparse(log_data["execution_time"])
+            return msg, execution_time
     except (json.JSONDecodeError, KeyError, ValueError):
-        return None, None
+        pass
+    return None, None
 
 def calculate_time_diff(logs):
     time_diffs = []
@@ -21,6 +23,10 @@ def calculate_time_diff(logs):
     return time_diffs
 
 def plot_time_diffs(time_diffs):
+    if not time_diffs:
+        print("No valid time differences to plot.")
+        return
+    
     labels, diffs = zip(*time_diffs)
     plt.figure(figsize=(12, 6))
     plt.plot(range(len(labels)), diffs, marker='o')
@@ -40,6 +46,10 @@ def main(log_file_path):
             if msg and execution_time:
                 logs.append((msg, execution_time))
     
+    if not logs:
+        print("No valid log entries found.")
+        return
+
     time_diffs = calculate_time_diff(logs)
     plot_time_diffs(time_diffs)
 
