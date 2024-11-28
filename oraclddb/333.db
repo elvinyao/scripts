@@ -1,0 +1,29 @@
+
+
+-- 1. 比较两个表的总行数
+SELECT 
+    (SELECT COUNT(*) FROM tablea) as original_count,
+    (SELECT COUNT(*) FROM tablea_backup) as backup_count,
+    CASE 
+        WHEN (SELECT COUNT(*) FROM tablea) = (SELECT COUNT(*) FROM tablea_backup) 
+        THEN 'Row counts match' 
+        ELSE 'Row counts do not match!' 
+    END as count_check
+FROM dual;
+
+-- 2. 比较所有列的数据使用MINUS操作
+-- 检查原表是否有备份表中不存在的记录
+SELECT COUNT(*) as missing_in_backup
+FROM (
+    SELECT * FROM tablea
+    MINUS
+    SELECT * FROM tablea_backup
+);
+
+-- 检查备份表是否有原表中不存在的记录
+SELECT COUNT(*) as extra_in_backup
+FROM (
+    SELECT * FROM tablea_backup
+    MINUS
+    SELECT * FROM tablea
+);
