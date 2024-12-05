@@ -1,0 +1,41 @@
+// 获取配置数据
+const config = items[0].json;
+
+// 创建结果数组
+let outputItems = [];
+
+// 遍历所有服务器
+for (const server of config.servers) {
+  // 为每个服务创建独立的SSH执行项
+  for (const service of server.services) {
+    outputItems.push({
+      json: {
+        // SSH连接信息
+        sshConfig: {
+          host: server.host,
+          port: server.port,
+          username: server.username,
+          password: server.password
+        },
+        // 服务信息
+        service: {
+          name: service.name,
+          container_name: service.container_name
+        },
+        // 执行命令
+        commands: {
+          stop: service.stop_command,
+          start: service.start_command,
+          check: service.check_command
+        },
+        // 额外添加用于标识的信息
+        serverName: server.host,
+        serviceName: service.name,
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
+}
+
+// 返回处理后的数组
+return outputItems;
