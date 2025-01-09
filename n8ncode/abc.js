@@ -4,3 +4,15 @@ $evaluateExpression(`
     : false
   }}
 `)
+
+
+$evaluateExpression(`
+  {{
+    ($json["originalString"] || "")
+      .trim()
+      .replace(/;$/, "")
+      .split(";")
+      .map(item => item.trim())
+      .includes(($json["targetString"] || "").trim())
+  }}
+`)
