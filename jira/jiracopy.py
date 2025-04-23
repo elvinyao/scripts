@@ -44,8 +44,27 @@ class JiraTicketCloner:
         
         return response.json()
     
+    def get_createmeta_fields(self, project_key, issue_type_id):
+        """
+        Get available fields for creating a ticket in specified project and issue type.
+        
+        Args:
+            project_key: Project key
+            issue_type_id: Issue type ID
+            
+        Returns:
+            dict: Available fields and their details
+        """
+        url = f"{self.jira_url}/rest/api/2/issue/createmeta/{project_key}/issuetypes/{issue_type_id}"
+        response = requests.get(url, auth=self.auth, headers=self.headers)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to get createmeta: {response.status_code} - {response.text}")
+        
+        return response.json()
+    
     def create_ticket(self, project_key, ticket_data, custom_summary=None, 
-                     custom_assignee=None, custom_reporter=None):
+                     custom_assignee=None, custom_reporter=None, target_project=None):
         """
         Create a new ticket based on existing ticket data.
         
@@ -55,51 +74,62 @@ class JiraTicketCloner:
             custom_summary: Optional custom summary for the new ticket
             custom_assignee: Optional custom assignee for the new ticket
             custom_reporter: Optional custom reporter for the new ticket
+            target_project: Optional target project key (if different from original)
             
         Returns:
             dict: New ticket data
         """
         original_fields = ticket_data.get('fields', {})
+        issue_type_id = original_fields.get('issuetype', {}).get('id')
         
-        # Prepare new ticket fields
+        # Use target project if specified, otherwise use original project
+        target_project_key = target_project or project_key
+        
+        # Get available fields for the target project and issue type
+        createmeta = self.get_createmeta_fields(target_project_key, issue_type_id)
+        available_fields = createmeta.get('values', {})
+        
+        # Start with basic fields
         fields = {
-            "project": {"key": project_key},
-            "issuetype": original_fields.get('issuetype', {}),
-            "summary": custom_summary or f"Clone of {ticket_data.get('key')}: {original_fields.get('summary')}",
-            "description": original_fields.get('description'),
-            "priority": original_fields.get('priority'),
-            "labels": original_fields.get('labels', []),
-            "components": original_fields.get('components', []),
-            "fixVersions": original_fields.get('fixVersions', []),
-            "versions": original_fields.get('versions', []),
+            "project": {"key": target_project_key},
+            "issuetype": original_fields.get('issuetype', {})
         }
+        
+        # Set custom or original summary
+        if custom_summary:
+            fields["summary"] = custom_summary
+        elif "summary" in available_fields and original_fields.get('summary'):
+            fields["summary"] = original_fields.get('summary')
         
         # Handle assignee
         if custom_assignee:
             fields["assignee"] = {"name": custom_assignee}
-        elif original_fields.get('assignee'):
+        elif "assignee" in available_fields and original_fields.get('assignee'):
             fields["assignee"] = original_fields.get('assignee')
             
         # Handle reporter
         if custom_reporter:
             fields["reporter"] = {"name": custom_reporter}
-        elif original_fields.get('reporter'):
+        elif "reporter" in available_fields and original_fields.get('reporter'):
             fields["reporter"] = original_fields.get('reporter')
         
-        # Copy epic link if exists
-        epic_link_field = None
-        for field_name, field_value in original_fields.items():
-            if field_name.lower().endswith('epic link') and field_value:
-                epic_link_field = field_name
-                fields[field_name] = field_value
-                break
+        # Copy standard fields if they exist in available fields and have non-empty values
+        standard_fields = [
+            "description", "priority", "labels", "components", 
+            "fixVersions", "versions", "duedate"
+        ]
         
-        # Copy other custom fields (excluding comments and attachments)
+        for field in standard_fields:
+            if field in available_fields and original_fields.get(field):
+                fields[field] = original_fields.get(field)
+        
+        # Copy custom fields (including epic link) if they exist in available fields and have non-empty values
         for field_name, field_value in original_fields.items():
-            if field_name.startswith('customfield_') and field_value and field_name != epic_link_field:
+            if field_name.startswith('customfield_') and field_value:
                 # Skip comments and attachments fields
                 if 'comment' not in field_name.lower() and 'attachment' not in field_name.lower():
-                    fields[field_name] = field_value
+                    if field_name in available_fields:
+                        fields[field_name] = field_value
         
         # Create new ticket
         url = f"{self.jira_url}/rest/api/2/issue"
@@ -144,7 +174,8 @@ class JiraTicketCloner:
         
         return True
     
-    def clone_ticket(self, ticket_key, custom_summary=None, custom_assignee=None, custom_reporter=None):
+    def clone_ticket(self, ticket_key, custom_summary=None, custom_assignee=None, 
+                    custom_reporter=None, target_project=None):
         """
         Clone a Jira ticket with custom fields and create link.
         
@@ -153,6 +184,7 @@ class JiraTicketCloner:
             custom_summary: Optional custom summary for the new ticket
             custom_assignee: Optional custom assignee for the new ticket
             custom_reporter: Optional custom reporter for the new ticket
+            target_project: Optional target project key (if different from original)
             
         Returns:
             str: New ticket key
@@ -169,7 +201,8 @@ class JiraTicketCloner:
             original_ticket, 
             custom_summary, 
             custom_assignee, 
-            custom_reporter
+            custom_reporter,
+            target_project
         )
         
         new_ticket_key = new_ticket.get('key')
@@ -239,7 +272,8 @@ def main():
                 ticket_key,
                 ticket_config.get('summary'),
                 ticket_config.get('assignee'),
-                ticket_config.get('reporter')
+                ticket_config.get('reporter'),
+                ticket_config.get('target_project')
             )
             
             print(f"Successfully cloned ticket {ticket_key}! New ticket key: {new_ticket_key}")
@@ -251,23 +285,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Jira connection details
-jira_url: "https://your-company.atlassian.net"
-username: "your.email@company.com"
-# Optional: Include API token in config file (not recommended for security reasons)
-# api_token: "your-api-token"
-
-# Tickets to clone
-tickets_to_clone:
-  - ticket_key: "PROJ-123"
-    summary: "Custom summary for first ticket"
-    assignee: "john.doe"
-    reporter: "jane.smith"
-  
-  - ticket_key: "PROJ-456"
-    summary: "Custom summary for second ticket"
-    # Leaving assignee empty will use original ticket's assignee
-    reporter: "alex.johnson"
-  
-  # You can add more tickets to clone as needed
