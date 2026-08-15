@@ -1,366 +1,121 @@
 # Docker Execution Policy
 
-## Core Rule
+IMPORTANT: The host machine is for source inspection and editing, not for executing project code.
 
-The host machine may be used for file inspection, searching, source editing, and Git inspection.
+## Host
 
-**Do not directly execute project code, tests, builds, scripts, binaries, package tools, or development commands on the host.**
+Direct host shell execution is allowed only for pure inspection operations such as:
 
-All such execution MUST use the repository's:
+- reading files
+- searching files
+- listing directories
+- checking file metadata
+- read-only Git inspection
 
-`.agent/run.sh`
+Examples include `ls`, `cat`, `grep`, `rg`, `find` for searching, `git status`, `git diff`, `git log`, and `git show`.
 
-The only approved host-side execution gateway for project commands is:
+Source files may be edited normally using the agent's file editing tools.
 
-`bash .agent/run.sh <command> [args...]`
+Do not use shell redirection or executable commands on the host to perform project work.
 
-The script must execute the requested command using a disposable:
+## Project execution
 
-`docker run --rm`
+Any operation that may execute code, load project code, install dependencies, compile, build, test, lint, format, generate code, start a server, run a script, or invoke a project tool MUST run through:
 
-container.
-
----
-
-## Commands Allowed Directly on the Host
-
-Pure inspection commands are allowed, including:
-
-* `pwd`
-* `ls`
-* `cat`
-* `head`
-* `tail`
-* `grep`
-* `rg`
-* `wc`
-* `sed -n`
-* `find` only when not using `-exec`, `-execdir`, `-delete`, or other execution/mutation options
-* `git status`
-* `git diff`
-* `git log`
-* `git show`
-* `git branch`
-* `git ls-files`
-
-Agent-native read/search tools are also allowed.
-
-Editing and creating source/configuration files is allowed.
-
-Creating or updating `.agent/run.sh` is allowed.
-
----
-
-## Commands That MUST Run in Docker
-
-Any command that may execute code, load project code, compile code, install dependencies, start a program, or run project tooling MUST be executed through:
-
-`bash .agent/run.sh ...`
-
-This includes, but is not limited to:
-
-* Python execution
-* pytest
-* tox
-* uv
-* Poetry commands that execute/install code
-* Node.js
-* npm
-* npx
-* pnpm
-* yarn
-* Go build/test/run
-* Java
-* javac
-* Maven
-* Maven Wrapper
-* Gradle
-* Gradle Wrapper
-* dotnet
-* Cargo
-* rustc
-* make
-* cmake
-* shell scripts
-* project binaries
-* migrations
-* code generators
-* linters
-* formatters
-* development servers
-* unit tests
-* integration tests
-* build commands
+    bash .agent/run.sh <command> [args...]
 
 Examples:
 
-Instead of:
+    bash .agent/run.sh pytest
+    bash .agent/run.sh python main.py
+    bash .agent/run.sh npm test
+    bash .agent/run.sh go test ./...
+    bash .agent/run.sh ./mvnw test
+    bash .agent/run.sh dotnet test
+    bash .agent/run.sh cargo test
 
-`pytest`
+For compound commands, put the shell inside Docker:
 
-use:
+    bash .agent/run.sh sh -lc 'command1 && command2'
 
-`bash .agent/run.sh pytest`
+Never run project execution directly on the host.
 
-Instead of:
+Never invoke `docker run` directly during normal project work. Use `.agent/run.sh`.
 
-`python scripts/check.py`
+## New repository
 
-use:
+When entering a repository, first check whether `.agent/run.sh` exists.
 
-`bash .agent/run.sh python scripts/check.py`
-
-Instead of:
-
-`go test ./...`
-
-use:
-
-`bash .agent/run.sh go test ./...`
-
-Instead of:
-
-`./mvnw test`
-
-use:
-
-`bash .agent/run.sh ./mvnw test`
-
-Instead of:
-
-`dotnet test`
-
-use:
-
-`bash .agent/run.sh dotnet test`
-
-Instead of:
-
-`cargo test`
-
-use:
-
-`bash .agent/run.sh cargo test`
-
-For compound commands, execute the shell inside Docker:
-
-`bash .agent/run.sh sh -lc 'command1 && command2'`
-
-Do not execute the compound shell command directly on the host.
-
----
-
-# New Project Bootstrap Rule
-
-Whenever working in a repository for the first time, check whether:
-
-`.agent/run.sh`
-
-exists.
+If it exists, read and reuse it.
 
 If it does not exist:
 
 1. Inspect the repository using read-only operations only.
-2. Determine the primary runtime and required runtime version.
+2. Determine the project's runtime and version.
 3. Create `.agent/run.sh`.
-4. Do not execute project code before `.agent/run.sh` has been created.
-5. After creation, use it for every project execution command.
+4. Do not execute project code until the runner exists.
+5. After creation, execute all project commands through the runner.
 
-The generated script must follow this basic structure:
+`mkdir -p .agent` is allowed only when needed to create the runner.
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+Write `.agent/run.sh` using file editing tools rather than shell redirection.
 
-IMAGE="<selected-image>"
+## Docker image selection
 
-PROJECT_ROOT="$(
-  cd "$(dirname "${BASH_SOURCE[0]}")/.." &&
-  pwd
-)"
+Prefer the runtime version explicitly declared by the repository.
 
-exec docker run \
-  --rm \
-  -i \
-  --init \
-  -v "${PROJECT_ROOT}:/workspace" \
-  -w /workspace \
-  "${IMAGE}" \
-  "$@"
-```
+Python:
+- inspect `.python-version`, `pyproject.toml`, `Pipfile`
+- use `python:<major.minor>-bookworm`
 
-Do not create a Dockerfile unless the project actually requires one.
+Node.js:
+- inspect `.nvmrc`, `.node-version`, `package.json` engines
+- use `node:<major>-bookworm`
 
-Do not create a complex sandbox system.
+Go:
+- inspect `go.mod` `go` and `toolchain`
+- use `golang:<major.minor>-bookworm`
 
-The normal execution model is simply:
+Java:
+- inspect `pom.xml`, Gradle files, Java toolchains, `.java-version`
+- when `mvnw` or `gradlew` exists, prefer the wrapper
+- use `eclipse-temurin:<java-major>-jdk`
+- if there is no wrapper, an appropriate Maven or Gradle build image may be used
 
-Host → `.agent/run.sh` → `docker run --rm` → command.
+.NET:
+- inspect `global.json`, `.csproj`, `.fsproj`, and TargetFramework
+- use `mcr.microsoft.com/dotnet/sdk:<major.minor>`
 
----
+Rust:
+- inspect `rust-toolchain.toml`, `rust-toolchain`, and `Cargo.toml` rust-version
+- use `rust:<version>-bookworm`
 
-# Runtime Image Selection
-
-Always determine the runtime version from the repository before choosing an image.
-
-## Python
-
-Inspect, in order where applicable:
-
-* `.python-version`
-* `pyproject.toml`
-* `Pipfile`
-* runtime documentation
-
-Use:
-
-`python:<major.minor>-slim-bookworm`
-
-Example:
-
-`python:3.12-slim-bookworm`
-
----
-
-## Go
-
-Read the version from:
-
-`go.mod`
-
-Use:
-
-`golang:<major.minor>-bookworm`
-
-Example:
-
-`golang:1.24-bookworm`
-
----
-
-## Java
-
-Determine the required Java version from:
-
-* `pom.xml`
-* `build.gradle`
-* `build.gradle.kts`
-* Maven toolchains
-* Gradle toolchains
-* project documentation
-
-If `mvnw` or `gradlew` exists, prefer the project wrapper and use:
-
-`eclipse-temurin:<java-version>-jdk`
-
-Example:
-
-`eclipse-temurin:21-jdk`
-
-Then execute:
-
-`bash .agent/run.sh ./mvnw test`
-
-or:
-
-`bash .agent/run.sh ./gradlew test`
-
-If the project does not contain a build-tool wrapper, an appropriate Maven or Gradle build image may be used instead.
-
----
-
-## .NET
-
-Inspect:
-
-* `global.json`
-* `*.csproj`
-* `*.fsproj`
-* `TargetFramework`
-* project documentation
-
-Use:
-
-`mcr.microsoft.com/dotnet/sdk:<major.minor>`
-
-Example:
-
-`mcr.microsoft.com/dotnet/sdk:10.0`
-
----
-
-## Rust
-
-Inspect:
-
-* `rust-toolchain.toml`
-* `rust-toolchain`
-* project documentation
-
-Use:
-
-`rust:<version>-bookworm`
-
-Example:
-
-`rust:1.85-bookworm`
-
-If no Rust version is pinned, use the stable Rust image family rather than nightly.
-
----
-
-## Node.js
-
-Inspect:
-
-* `.nvmrc`
-* `.node-version`
-* `package.json` `engines.node`
-* project documentation
-
-Use:
-
-`node:<major>-bookworm-slim`
-
-Example:
-
-`node:22-bookworm-slim`
-
----
-
-# Image Selection Rules
-
-Priority:
-
-1. Explicit runtime version declared by the repository.
-2. Runtime version documented by the project.
-3. Stable/LTS runtime when the repository specifies no version.
+Do not use `latest` when the repository declares a runtime version.
 
 Do not arbitrarily upgrade the project's runtime.
 
-Do not use prerelease, beta, RC, nightly, or development images unless the project explicitly requires them.
+If the repository genuinely requires multiple runtimes, `.agent/run.sh` may select between multiple appropriate images internally, but the external execution interface must remain:
 
-Prefer standard Debian-based official runtime images.
+    bash .agent/run.sh ...
 
-Do not default to Alpine unless the project explicitly requires Alpine or musl compatibility.
+## Runner requirements
 
----
+`.agent/run.sh` must:
 
-# Existing `.agent/run.sh`
+- use `docker run --rm`
+- mount the project at `/workspace`
+- use `/workspace` as the container working directory
+- pass the requested command and arguments to the container
+- contain no project execution on the host
 
-If `.agent/run.sh` already exists:
+Use this basic pattern:
 
-1. Read it first.
-2. Reuse it when it satisfies this policy.
-3. Do not unnecessarily regenerate it.
-4. Update it only if the project's runtime requirements have changed or the script is incorrect.
+    docker run --rm -i --init \
+      -v "${PROJECT_ROOT}:/workspace" \
+      -w /workspace \
+      "${IMAGE}" \
+      "$@"
 
----
+If Docker is unavailable or the runner fails, report the problem.
 
-# Failure Rule
-
-If Docker is unavailable or `.agent/run.sh` cannot execute:
-
-**Stop execution and report the problem.**
-
-Do not fall back to running project commands directly on the host.
+Never fall back to executing the project command directly on the host.
