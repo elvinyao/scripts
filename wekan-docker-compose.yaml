@@ -1,0 +1,97 @@
+name: wekan
+
+services:
+  mongodb:
+    image: mongo:7.0.43
+    restart: unless-stopped
+    stop_grace_period: 1m
+
+    command:
+      - mongod
+      - --bind_ip_all
+      - --replSet
+      - rs0
+      - --oplogSize
+      - "256"
+      - --wiredTigerCacheSizeGB
+      - "0.5"
+
+    volumes:
+      - mongo_data:/data/db
+
+    networks:
+      - backend
+
+    # 首次启动自动初始化单节点副本集。
+    # 已有副本集不会重复初始化；成为 PRIMARY 后才报告健康。
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --host
+        - 127.0.0.1
+        - --quiet
+        - --eval
+        - |
+          try {
+            rs.status();
+          } catch (e) {
+            if (e.code !== 94 && e.codeName !== "NotYetInitialized") {
+              throw e;
+            }
+            rs.initiate({
+              _id: "rs0",
+              members: [{ _id: 0, host: "mongodb:27017" }]
+            });
+          }
+          quit(db.hello().isWritablePrimary ? 0 : 1);
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  wekan:
+    image: ghcr.io/wekan/wekan:v11.86
+    restart: unless-stopped
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    environment:
+      TZ: Asia/Tokyo
+      PORT: "8080"
+
+      # 必须与浏览器实际访问的地址一致。
+      ROOT_URL: "${ROOT_URL:-http://localhost:8080}"
+
+      # 明确使用外部 MongoDB，而不是镜像内置的 FerretDB。
+      WEKAN_DB: mongodb
+      MONGO_URL: "mongodb://mongodb:27017/wekan?replicaSet=rs0"
+      MONGO_OPLOG_URL: "mongodb://mongodb:27017/local?replicaSet=rs0"
+
+      METEOR_REACTIVITY_ORDER: "changeStreams,oplog,polling"
+      DDP_TRANSPORT: sockjs
+
+      # 附件、头像等文件的持久化位置。
+      WRITABLE_PATH: /data
+      WITH_API: "true"
+
+    volumes:
+      - app_data:/data
+
+    networks:
+      - frontend
+      - backend
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  mongo_data:
+  app_data:
